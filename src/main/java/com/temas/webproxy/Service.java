@@ -27,6 +27,7 @@ public class Service {
     private static final int DEFAULT_BUFFER_SIZE = 200480; // ..bytes = 200KB.
 
     private final static String urlPreffix = "http://192.168.86.230:8080/mirror?url=";
+    private String lastRequestedUrl = null;
 
     @RequestMapping(value = "/test")
     public void test(HttpServletRequest request,
@@ -53,6 +54,13 @@ public class Service {
             throws URISyntaxException {
 
         System.out.println("Processing remotePath: " + remotePath);
+        lastRequestedUrl = remotePath;
+
+        mirror(body, remotePath, method, request, response);
+    }
+
+    private void mirror(String body, String remotePath, HttpMethod method, HttpServletRequest request, HttpServletResponse response) throws URISyntaxException {
+        System.out.println("Mirroring remotePath: " + remotePath);
         URI uri = new URI(remotePath);
         uri = UriComponentsBuilder.fromUri(uri)
                 .build(true).toUri();
@@ -100,6 +108,20 @@ public class Service {
         }
     }
 
+    @RequestMapping(value = "*")
+    public void relativeRequest(@RequestBody(required = false) String body,
+                                HttpMethod method,
+                                HttpServletRequest request,
+                                HttpServletResponse response) throws URISyntaxException {
+        System.out.println("Relative path requested: " + request.getRequestURI());
+        String requestURI = request.getRequestURI();
+        if (requestURI != null && requestURI.startsWith("/") && lastRequestedUrl != null) {
+            int slashIndex = lastRequestedUrl.lastIndexOf("/");
+            String remotePath = lastRequestedUrl.substring(0, slashIndex) + requestURI;
+            mirror(body, remotePath, method, request, response);
+        }
+    }
+
     private void streamOutput(HttpServletResponse response, ResponseEntity<Resource> responseEntity) {
         byte[] buffer = new byte[DEFAULT_BUFFER_SIZE];
         ServletOutputStream outputStream = null;
@@ -142,13 +164,10 @@ public class Service {
                     String resourceURL = null;
                     if (line.startsWith("http")) {
                         resourceURL = line;
-
-                    } else {
-                        int slashIndex = basePath.lastIndexOf("/");
-                        resourceURL = basePath.substring(0, slashIndex + 1) + line;
+                        //translate
+                        line = urlPreffix + URLEncoder.encode(resourceURL, "UTF-8");
                     }
-                    //translate
-                    line = urlPreffix + URLEncoder.encode(resourceURL, "UTF-8");
+
                 }
                 outputWriter.write(line);
                 size += line.getBytes("UTF-8").length;
@@ -157,9 +176,11 @@ public class Service {
                 System.out.println(line);
                 linesWritten++;
             }
+
             response.setHeader("Content-Length", String.valueOf(size));
-            response.setHeader("Connection", "Keep-Alive");
+            response.setHeader("Connection", "keep-alive");
             outputWriter.flush();
+            response.setStatus(responseEntity.getStatusCodeValue(), responseEntity.getStatusCode().name());
             System.out.println("Translated successfully: " + basePath + ". Bytes: " + size);
         }
         catch (IOException e) {
